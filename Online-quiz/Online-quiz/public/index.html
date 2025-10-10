@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Quiz Application</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configure Tailwind for the Inter font and custom colors -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'primary': '#4f46e5',
+                        'secondary': '#eef2ff',
+                        'success': '#10b981',
+                        'danger': '#ef4444',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar for a cleaner look */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans min-h-screen flex items-center justify-center p-4">
+
+    <div id="app-container" class="w-full max-w-2xl bg-white shadow-2xl rounded-xl p-8 space-y-6 fade-in">
+        
+        <!-- Header -->
+        <header class="text-center pb-4 border-b border-gray-200">
+            <h1 class="text-4xl font-extrabold text-gray-800">Knowledge Check</h1>
+            <p class="text-lg text-gray-500 mt-1">Test your skills against our random quiz!</p>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="quiz-content">
+            <!-- Loading, Quiz, or Results will be injected here -->
+        </main>
+        
+        <!-- Footer/Status -->
+        <footer class="text-center pt-4 border-t border-gray-200 text-sm text-gray-400">
+            <p id="footer-status">Loading quiz data...</p>
+        </footer>
+    </div>
+
+    <script>
+        // API Configuration
+        const API_BASE_URL = 'http://localhost:5000/api/quizzes';
+
+        // State Management
+        let questions = [];
+        let userAnswers = {}; // { questionId: selectedIndex }
+        let scoreData = null;
+
+        // Utility: Displays a temporary message in the footer
+        const setStatus = (message, isError = false) => {
+            const footerStatus = document.getElementById('footer-status');
+            footerStatus.textContent = message;
+            footerStatus.className = `text-center pt-4 border-t border-gray-200 text-sm ${isError ? 'text-danger' : 'text-gray-500'}`;
+        };
+
+        // --- Core Fetching Logic ---
+
+        const fetchQuestions = async () => {
+            setStatus('Fetching 10 random questions...');
+            try {
+                const response = await fetch(API_BASE_URL);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                questions = await response.json();
+                if (questions.length === 0) {
+                    setStatus('No questions available in the database. Please add questions via the Admin API.', true);
+                    return;
+                }
+                // Initialize user answers state
+                userAnswers = questions.reduce((acc, q) => ({ ...acc, [q._id]: -1 }), {});
+                renderQuiz();
+            } catch (error) {
+                console.error('Fetch Error:', error);
+                setStatus(`Failed to load quiz: ${error.message}. Ensure your Node.js server is running.`, true);
+            }
+        };
+
+        const submitQuiz = async () => {
+            setStatus('Submitting answers and calculating score...');
+            
+            // Format the answers for the backend
+            const submissionPayload = questions.map((q) => ({
+                questionId: q._id,
+                selectedIndex: userAnswers[q._id]
+            }));
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/submit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(submissionPayload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                scoreData = await response.json();
+                renderResults();
+
+            } catch (error) {
+                console.error('Submission Error:', error);
+                setStatus(`Submission failed: ${error.message}`, true);
+            }
+        };
+
+        // --- Interaction Handlers ---
+
+        const handleAnswerSelect = (questionId, optionIndex) => {
+            userAnswers[questionId] = optionIndex;
+            // Visually update the selected option
+            const optionsContainer = document.getElementById(`options-${questionId}`);
+            if (optionsContainer) {
+                optionsContainer.querySelectorAll('button').forEach((btn, index) => {
+                    btn.classList.remove('bg-primary', 'text-white', 'border-primary');
+                    btn.classList.add('bg-white', 'text-gray-700', 'hover:bg-secondary');
+                    if (index === optionIndex) {
+                        btn.classList.add('bg-primary', 'text-white', 'border-primary');
+                        btn.classList.remove('bg-white', 'hover:bg-secondary');
+                    }
+                });
+            }
+            // Check if all questions are answered
+            const unanswered = Object.values(userAnswers).filter(index => index === -1).length;
+            document.getElementById('submit-btn').disabled = unanswered > 0;
+            document.getElementById('submit-btn').textContent = unanswered > 0 ? `Answer All (${unanswered} left)` : 'Submit Quiz!';
+        };
+
+        // --- Rendering Logic ---
+
+        const renderQuiz = () => {
+            const content = document.getElementById('quiz-content');
+            content.innerHTML = '';
+            
+            const quizHtml = questions.map((q, qIndex) => `
+                <div class="bg-secondary p-5 rounded-lg mb-6 shadow-md fade-in">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-3">
+                        <span class="text-primary mr-2">${qIndex + 1}.</span> ${q.question}
+                    </h3>
+                    <div id="options-${q._id}" class="space-y-3">
+                        ${q.options.map((option, oIndex) => `
+                            <button
+                                onclick="handleAnswerSelect('${q._id}', ${oIndex})"
+                                class="w-full text-left p-3 border border-gray-300 rounded-lg transition duration-200
+                                       bg-white text-gray-700 hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-opacity-50"
+                                data-index="${oIndex}"
+                            >
+                                <span class="font-medium mr-2 text-gray-500">${String.fromCharCode(65 + oIndex)}.</span> ${option}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+
+            // Add the submit button
+            const submitButton = `
+                <div class="mt-8 text-center">
+                    <button 
+                        id="submit-btn" 
+                        onclick="submitQuiz()" 
+                        disabled 
+                        class="px-8 py-3 text-lg font-bold rounded-xl text-white bg-gray-400 cursor-not-allowed transition duration-300 shadow-md disabled:opacity-75"
+                    >
+                        Answer All (${questions.length} left)
+                    </button>
+                </div>
+            `;
+            
+            content.innerHTML = quizHtml + submitButton;
+            setStatus(`Quiz loaded: ${questions.length} questions.`);
+            
+            // Re-bind submit button for proper styling once all answered
+            document.getElementById('quiz-content').addEventListener('click', () => {
+                const unanswered = Object.values(userAnswers).filter(index => index === -1).length;
+                const submitBtn = document.getElementById('submit-btn');
+                
+                if (submitBtn) {
+                    if (unanswered === 0) {
+                        submitBtn.classList.remove('bg-gray-400', 'cursor-not-allowed', 'disabled:opacity-75');
+                        submitBtn.classList.add('bg-primary', 'hover:bg-indigo-600', 'shadow-lg');
+                        submitBtn.disabled = false;
+                    } else {
+                         submitBtn.classList.add('bg-gray-400', 'cursor-not-allowed', 'disabled:opacity-75');
+                         submitBtn.classList.remove('bg-primary', 'hover:bg-indigo-600', 'shadow-lg');
+                         submitBtn.disabled = true;
+                    }
+                    submitBtn.textContent = unanswered > 0 ? `Answer All (${unanswered} left)` : 'Submit Quiz!';
+                }
+            });
+        };
+
+        const renderResults = () => {
+            const content = document.getElementById('quiz-content');
+            
+            if (!scoreData) {
+                setStatus('Could not retrieve score data.', true);
+                return;
+            }
+
+            const { score, totalQuestions, percentage, results } = scoreData;
+            const percentageText = `${percentage.toFixed(2)}%`;
+            
+            let resultColor = 'bg-danger';
+            if (percentage >= 70) resultColor = 'bg-success';
+            else if (percentage >= 40) resultColor = 'bg-yellow-500';
+
+            const resultsHtml = `
+                <div class="text-center space-y-4 fade-in">
+                    <h2 class="text-3xl font-bold text-gray-800">Quiz Complete!</h2>
+                    
+                    <div class="inline-block p-4 rounded-xl text-white ${resultColor} shadow-xl">
+                        <p class="text-5xl font-extrabold">${score} / ${totalQuestions}</p>
+                        <p class="text-lg font-semibold mt-1">${percentageText}</p>
+                    </div>
+
+                    <p class="text-lg text-gray-600">${score >= 7 ? "Excellent job! You have a great grasp of the topics." : "Good effort! Review the questions below to learn more."}</p>
+
+                    <button 
+                        onclick="window.location.reload()" 
+                        class="px-6 py-2 mt-4 text-white bg-primary rounded-lg hover:bg-indigo-600 transition duration-200 shadow-md"
+                    >
+                        Start New Quiz
+                    </button>
+                </div>
+
+                <div class="mt-8 pt-6 border-t border-gray-200 space-y-4">
+                    <h3 class="text-2xl font-semibold text-gray-800">Detailed Review</h3>
+                    ${questions.map((q, qIndex) => {
+                        const result = results.find(r => r.questionId === q._id);
+                        const isCorrect = result ? result.isCorrect : false;
+                        const correctIndex = result ? result.correctIndex : -1;
+                        const indicatorClass = isCorrect ? 'border-success' : 'border-danger';
+                        const bgColor = isCorrect ? 'bg-green-50' : 'bg-red-50';
+
+                        return `
+                            <div class="p-4 rounded-lg border-l-4 ${indicatorClass} ${bgColor} shadow-sm">
+                                <p class="font-bold text-lg text-gray-800 mb-2">${qIndex + 1}. ${q.question}</p>
+                                <ul class="space-y-1 text-sm">
+                                    ${q.options.map((option, oIndex) => {
+                                        let optionClass = 'text-gray-700';
+                                        if (oIndex === correctIndex) {
+                                            optionClass = 'font-bold text-success'; // Correct Answer
+                                        } else if (oIndex === result?.submittedIndex) {
+                                            optionClass = 'font-bold text-danger line-through'; // User's Incorrect Answer
+                                        }
+
+                                        return `<li class="${optionClass}">
+                                            <span class="font-medium mr-1">${String.fromCharCode(65 + oIndex)}.</span> ${option}
+                                        </li>`;
+                                    }).join('')}
+                                </ul>
+                                <p class="mt-2 text-sm ${isCorrect ? 'text-success' : 'text-danger'} font-semibold">
+                                    Your Answer: ${isCorrect ? 'Correct' : 'Incorrect'}
+                                </p>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+            
+            content.innerHTML = resultsHtml;
+            setStatus(`Score: ${score} out of ${totalQuestions}.`);
+        };
+
+
+        // --- Initialization ---
+
+        window.onload = () => {
+            fetchQuestions();
+        };
+
+    </script>
+</body>
+</html>
